@@ -1,2 +1,2 @@
-pydantic>=2.8,<3
+pydantic>=2.13.4,<3
 transformers==5.15.1
