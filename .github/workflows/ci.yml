@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate Compose configuration
         run: docker compose config --quiet
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v6
         with:
           context: .
