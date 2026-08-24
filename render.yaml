@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: reliability-observatory
+    runtime: docker
+    plan: starter
+    region: singapore
+    autoDeployTrigger: checksPass
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /readyz
+    maxShutdownDelaySeconds: 60
+    disk:
+      name: reliability-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:////data/reliability.db
+      - key: STATIC_DIR
+        value: /app/static
+      - key: CORS_ORIGINS
+        value: ""
+      - key: ALLOW_PRIVATE_TARGET_URLS
+        value: "false"
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: INSTALL_OPTIONAL_INTEGRATIONS
+        value: "false"

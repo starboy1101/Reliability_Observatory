@@ -1,0 +1,36 @@
+name: reliability-observatory
+
+services:
+  app:
+    image: reliability-observatory:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_OPTIONAL_INTEGRATIONS: ${INSTALL_OPTIONAL_INTEGRATIONS:-false}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: sqlite+aiosqlite:////data/reliability.db
+      STATIC_DIR: /app/static
+      CORS_ORIGINS: http://localhost:8000
+      PORT: 8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - reliability-data:/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 60s
+
+volumes:
+  reliability-data:
