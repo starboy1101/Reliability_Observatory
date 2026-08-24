@@ -8,15 +8,19 @@ from sqlalchemy import select
 
 from .config import Settings
 from .database import Database
-from .enums import TERMINAL_RUN_STATUSES, RunStatus, TargetKind
+from .enums import LIVE_TARGET_KINDS, TERMINAL_RUN_STATUSES, RunStatus, TargetKind
 from .evaluators import EvaluationOutcome, Evaluator, build_evaluator
 from .models import EvaluationResult, EvaluationRun
 from .schemas import PromptDefinition, RunCreate
 from .suite import SUITE_ID, select_prompts, suite_checksum
-from .targets import GenerationResult, TargetAdapter, build_target
+from .targets import GenerationResult, TargetAdapter, TargetError, build_target
 from .tracing import TraceSink, build_trace_sink
 
 logger = logging.getLogger(__name__)
+
+
+class RunCapacityError(RuntimeError):
+    """A live run could not be admitted without exceeding configured capacity."""
 
 
 def utc_now() -> datetime:
@@ -35,6 +39,8 @@ class RunOrchestrator:
         self.settings = settings
         self.trace_sink: TraceSink = build_trace_sink(settings)
         self.tasks: dict[str, asyncio.Task[None]] = {}
+        self.live_run_ids: set[str] = set()
+        self._launch_lock = asyncio.Lock()
 
     async def recover_interrupted_runs(self) -> None:
         async with self.database.session_factory() as session:
@@ -61,6 +67,21 @@ class RunOrchestrator:
 
     async def launch(self, request: RunCreate) -> EvaluationRun:
         prompts = select_prompts(request.categories, request.limit)
+        is_live = request.target.kind in LIVE_TARGET_KINDS or request.evaluator == "deepeval"
+        if (
+            request.target.kind
+            in {TargetKind.DEMO_BASELINE, TargetKind.DEMO_HARDENED}
+            and request.target.demo_delay_ms > self.settings.max_demo_delay_ms
+        ):
+            raise TargetError(
+                "Demo delay exceeds this deployment's "
+                f"{self.settings.max_demo_delay_ms} ms safety limit"
+            )
+        if is_live and len(prompts) > self.settings.max_live_run_prompts:
+            raise TargetError(
+                "Live model runs are limited to "
+                f"{self.settings.max_live_run_prompts} prompts on this deployment"
+            )
         evaluator = build_evaluator(request.evaluator, self.settings)
         target = build_target(request.target, self.settings)
         try:
@@ -116,25 +137,44 @@ class RunOrchestrator:
             category_summary=category_summary,
         )
         try:
-            async with self.database.session_factory() as session:
-                session.add(run)
-                await session.commit()
-                await session.refresh(run)
+            async with self._launch_lock:
+                if len(self.tasks) >= self.settings.max_active_runs:
+                    raise RunCapacityError(
+                        "The evaluation service is at capacity; retry after an active run finishes"
+                    )
+                if is_live and len(self.live_run_ids) >= self.settings.max_active_live_runs:
+                    raise RunCapacityError(
+                        "The live-model run slot is busy; retry after the active run finishes"
+                    )
+                async with self.database.session_factory() as session:
+                    session.add(run)
+                    await session.commit()
+                    await session.refresh(run)
+
+                # Commit before scheduling so polling can never observe a phantom ID.
+                task = asyncio.create_task(
+                    self._execute(run_id, prompts, target, evaluator, request.concurrency),
+                    name=f"evaluation-run-{run_id}",
+                )
+                self.tasks[run_id] = task
+                if is_live:
+                    self.live_run_ids.add(run_id)
+                task.add_done_callback(
+                    lambda completed, rid=run_id, live=is_live: self._task_done(
+                        rid, completed, live
+                    )
+                )
         except Exception:
             await target.close()
             raise
-
-        # The run is committed before task scheduling, so polling can never observe a phantom ID.
-        task = asyncio.create_task(
-            self._execute(run_id, prompts, target, evaluator, request.concurrency),
-            name=f"evaluation-run-{run_id}",
-        )
-        self.tasks[run_id] = task
-        task.add_done_callback(lambda completed, rid=run_id: self._task_done(rid, completed))
         return run
 
-    def _task_done(self, run_id: str, task: asyncio.Task[None]) -> None:
+    def _task_done(
+        self, run_id: str, task: asyncio.Task[None], is_live: bool = False
+    ) -> None:
         self.tasks.pop(run_id, None)
+        if is_live:
+            self.live_run_ids.discard(run_id)
         if task.cancelled():
             return
         try:
@@ -153,6 +193,7 @@ class RunOrchestrator:
         concurrency = min(requested_concurrency, self.settings.max_run_concurrency)
         trace_id: str | None = None
         try:
+            await target.prepare()
             if not await self._mark_running(run_id):
                 return
             trace_id = await self.trace_sink.start_run(

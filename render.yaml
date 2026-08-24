@@ -25,6 +25,20 @@ services:
         value: ""
       - key: ALLOW_PRIVATE_TARGET_URLS
         value: "false"
+      - key: MAX_RUN_CONCURRENCY
+        value: "1"
+      - key: MAX_ACTIVE_RUNS
+        value: "2"
+      - key: MAX_DEMO_DELAY_MS
+        value: "50"
+      - key: MAX_ACTIVE_LIVE_RUNS
+        value: "1"
+      - key: MAX_LIVE_RUN_PROMPTS
+        value: "6"
+      - key: TARGET_TIMEOUT_SECONDS
+        value: "300"
+      - key: TARGET_WARMUP_SECONDS
+        value: "300"
       - key: LANGSMITH_TRACING
         value: "false"
       - key: INSTALL_OPTIONAL_INTEGRATIONS

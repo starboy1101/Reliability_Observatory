@@ -23,6 +23,13 @@ class TargetKind(str, Enum):
     DEMO_BASELINE = "demo_baseline"
     DEMO_HARDENED = "demo_hardened"
     OPENAI_COMPATIBLE = "openai_compatible"
+    HUGGINGFACE_GRADIO = "huggingface_gradio"
+
+
+LIVE_TARGET_KINDS = {
+    TargetKind.OPENAI_COMPATIBLE,
+    TargetKind.HUGGINGFACE_GRADIO,
+}
 
 
 TERMINAL_RUN_STATUSES = {

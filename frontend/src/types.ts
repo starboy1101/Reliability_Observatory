@@ -23,6 +23,7 @@ export interface EvaluationRun {
   id: string
   name: string
   model: string
+  targetKind?: string
   evaluator: string
   status: 'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'cancelled'
   totalCases: number
@@ -105,9 +106,14 @@ export interface ApiResult<T> {
 
 export interface LaunchRunInput {
   name: string
-  targetKind: 'demo_baseline' | 'demo_hardened' | 'openai_compatible'
+  targetKind:
+    | 'demo_baseline'
+    | 'demo_hardened'
+    | 'openai_compatible'
+    | 'huggingface_gradio'
   model?: string
   baseUrl?: string
+  accessKey?: string
   evaluator: 'deterministic' | 'deepeval'
   categories: CategoryId[]
   limit: number

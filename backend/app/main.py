@@ -2,12 +2,13 @@ import asyncio
 import csv
 import io
 import json
+import secrets
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -16,10 +17,16 @@ from sqlalchemy import func, select, text
 from . import __version__
 from .config import Settings, get_settings
 from .database import Database
-from .enums import TERMINAL_RUN_STATUSES, PromptCategory, RunStatus, TargetKind
+from .enums import (
+    LIVE_TARGET_KINDS,
+    TERMINAL_RUN_STATUSES,
+    PromptCategory,
+    RunStatus,
+    TargetKind,
+)
 from .evaluators import EvaluatorUnavailable, evaluator_catalog
 from .models import EvaluationResult, EvaluationRun
-from .orchestrator import RunOrchestrator
+from .orchestrator import RunCapacityError, RunOrchestrator
 from .schemas import (
     PromptPage,
     ReferenceBenchmark,
@@ -174,8 +181,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         else "not_configured_or_not_required"
                     ),
                 },
+                {
+                    "id": TargetKind.HUGGINGFACE_GRADIO.value,
+                    "name": "Hugging Face Gradio ZeroGPU Space",
+                    "description": "Queued Gradio endpoint for the included free ZeroGPU model target.",
+                    "credentials": (
+                        "server_configured"
+                        if app_settings.huggingface_space_api_key
+                        else "not_configured"
+                    ),
+                },
             ],
-            "total": 3,
+            "total": 4,
         }
 
     @application.get("/api/v1/suites", response_model=dict[str, Any], tags=["suites"])
@@ -252,12 +269,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "selection_rule": "All 100 cases from each of the other five categories, in suite order.",
         }
 
+    def require_integration_access(authorization: str | None) -> None:
+        expected_secret = app_settings.live_run_access_key
+        if expected_secret is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Live integrations are disabled until LIVE_RUN_ACCESS_KEY "
+                    "is configured"
+                ),
+            )
+        scheme, separator, supplied = (authorization or "").partition(" ")
+        expected = expected_secret.get_secret_value()
+        valid = (
+            bool(separator)
+            and scheme.lower() == "bearer"
+            and bool(supplied)
+            and secrets.compare_digest(supplied, expected)
+        )
+        if not valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid live-run access key is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     @application.post(
         "/api/v1/runs", response_model=RunRead, status_code=status.HTTP_202_ACCEPTED, tags=["runs"]
     )
-    async def create_run(payload: RunCreate, request: Request) -> RunRead:
+    async def create_run(
+        payload: RunCreate,
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> RunRead:
+        protected_integration = (
+            payload.target.kind in LIVE_TARGET_KINDS or payload.evaluator == "deepeval"
+        )
+        if protected_integration:
+            require_integration_access(authorization)
         try:
             run = await request.app.state.orchestrator.launch(payload)
+        except RunCapacityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(exc),
+                headers={"Retry-After": "10"},
+            ) from exc
         except (EvaluatorUnavailable, TargetError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _run_read(run)
@@ -303,10 +360,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _run_read(run)
 
     @application.post("/api/v1/runs/{run_id}/cancel", response_model=RunRead, tags=["runs"])
-    async def cancel_run(run_id: str, request: Request) -> RunRead:
-        run = await request.app.state.orchestrator.request_cancel(run_id)
-        if run is None:
+    async def cancel_run(
+        run_id: str,
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> RunRead:
+        existing = await request.app.state.orchestrator.get_run(run_id)
+        if existing is None:
             raise HTTPException(status_code=404, detail="Run not found")
+        if (
+            existing.target_kind in {kind.value for kind in LIVE_TARGET_KINDS}
+            or existing.evaluator_name == "deepeval"
+        ):
+            require_integration_access(authorization)
+        run = await request.app.state.orchestrator.request_cancel(run_id)
+        assert run is not None
         return _run_read(run)
 
     async def load_results(

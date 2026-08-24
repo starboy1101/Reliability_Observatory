@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .enums import PromptCategory, RunStatus, TargetKind
+from .enums import LIVE_TARGET_KINDS, PromptCategory, RunStatus, TargetKind
 
 
 class PromptDefinition(BaseModel):
@@ -53,14 +53,29 @@ class TargetConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> "TargetConfig":
-        if self.kind == TargetKind.OPENAI_COMPATIBLE:
+        if self.kind in LIVE_TARGET_KINDS:
             if not self.model:
-                raise ValueError("model is required for an OpenAI-compatible target")
+                raise ValueError("model is required for a live target")
             if not self.base_url:
-                raise ValueError("base_url is required for an OpenAI-compatible target")
+                raise ValueError("base_url is required for a live target")
             parsed = urlparse(self.base_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError("base_url must be an absolute HTTP(S) URL")
+            if parsed.username or parsed.password:
+                raise ValueError("credentials in base_url are not allowed")
+            if self.kind == TargetKind.HUGGINGFACE_GRADIO:
+                if parsed.scheme != "https" or not (
+                    parsed.hostname or ""
+                ).lower().endswith(".hf.space"):
+                    raise ValueError(
+                        "a Hugging Face Gradio target requires an HTTPS .hf.space URL"
+                    )
+                if parsed.port not in {None, 443}:
+                    raise ValueError("a Hugging Face Gradio target must use HTTPS port 443")
+                if parsed.path.rstrip("/") or parsed.query or parsed.fragment:
+                    raise ValueError(
+                        "use only the Hugging Face Space origin, without a path, query, or fragment"
+                    )
         return self
 
     def public_snapshot(self) -> dict[str, Any]:

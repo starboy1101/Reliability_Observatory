@@ -1410,7 +1410,7 @@ td small {
 
 .choice-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.7rem;
 }
 
@@ -1911,6 +1911,33 @@ td small {
 .cancel-confirm span {
   font-size: 0.75rem;
   font-weight: 680;
+}
+
+.cancel-confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cancel-confirm__key {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.cancel-confirm__key input {
+  width: 10.5rem;
+  min-height: 2.1rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.65rem;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.cancel-confirm__error {
+  flex-basis: 100%;
+  color: var(--danger);
+  text-align: right;
 }
 
 /* Library and findings */

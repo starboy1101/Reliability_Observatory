@@ -158,6 +158,7 @@ export function normalizeRun(value: unknown): EvaluationRun {
     id: stringValue(raw.id, raw.run_id, `run-${Date.now()}`),
     name: stringValue(raw.name, raw.benchmark_label, raw.label, `Evaluation · ${stringValue(target.model, raw.model, raw.target_kind, 'model')}`),
     model: stringValue(raw.model, target.model, target.kind, 'model'),
+    targetKind: stringValue(raw.target_kind, target.kind),
     evaluator: stringValue(raw.evaluator, raw.evaluator_name, 'Deterministic'),
     status,
     totalCases,
@@ -396,6 +397,9 @@ export const api = {
     try {
       const payload = await request<unknown>('/runs', {
         method: 'POST',
+        headers: input.accessKey
+          ? { Authorization: `Bearer ${input.accessKey}` }
+          : undefined,
         body: JSON.stringify({
           name: input.name,
           target,
@@ -415,14 +419,19 @@ export const api = {
     }
   },
 
-  async cancelRun(id: string): Promise<ApiResult<EvaluationRun>> {
+  async cancelRun(id: string, accessKey?: string): Promise<ApiResult<EvaluationRun>> {
     if (id.startsWith('demo-')) {
       return { data: cancelDemoRun(id) ?? demoRuns[0], source: 'demo' }
     }
     try {
       return {
         data: normalizeRun(
-          await request<unknown>(`/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+          await request<unknown>(`/runs/${encodeURIComponent(id)}/cancel`, {
+            method: 'POST',
+            headers: accessKey
+              ? { Authorization: `Bearer ${accessKey}` }
+              : undefined,
+          }),
         ),
         source: 'live',
       }

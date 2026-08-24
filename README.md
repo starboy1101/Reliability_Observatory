@@ -21,7 +21,9 @@ generic monitoring dashboard.
 - A deterministic, versioned suite of **600 adversarial prompts**: 100 in each
   of six failure categories.
 - A zero-key demo target for safe local trials and CI.
-- An OpenAI-compatible target adapter for live model evaluation.
+- OpenAI-compatible and Hugging Face Gradio queue adapters for live evaluation.
+- A deployable authenticated Gradio ZeroGPU Space for a real hosted model
+  target, with a pinned model revision and a free-eligible hosting path.
 - Transparent deterministic checks plus an optional, lazily loaded DeepEval
   judge adapter.
 - Optional LangSmith tracing that never becomes the source of truth and never
@@ -61,6 +63,7 @@ FastAPI API ─────── SQLite (local/demo) or configured SQL database
         │
         ├── deterministic demo target + transparent checks
         ├── OpenAI-compatible model endpoint
+        ├── Hugging Face Gradio ZeroGPU queue
         ├── optional DeepEval judge
         └── optional LangSmith traces
 ```
@@ -70,11 +73,10 @@ The included single-process dispatcher is ideal for a portfolio deployment or
 small team. For horizontally scaled production, replace it with a durable queue
 worker as described in [Architecture](docs/ARCHITECTURE.md).
 
-The included deployment profile is an unauthenticated, zero-key demonstration,
-not a ready-made multi-tenant SaaS boundary. It is safe to publish with only the
-deterministic targets enabled. Do not attach a paid provider credential to a
-public instance until authentication, authorization, rate limits, and spend
-quotas are in place.
+The included deployment profile has a public, zero-key deterministic demo.
+Live target and DeepEval launches require a separate shared access key and use
+small server-side run caps, but this is not a ready-made identity or
+multi-tenant authorization boundary.
 
 ## Quick start
 
@@ -138,21 +140,42 @@ Configure the credential on the server:
 
 ```dotenv
 OPENAI_COMPATIBLE_API_KEY=replace-me
-TARGET_HOST_ALLOWLIST=your-provider.example
+HUGGINGFACE_SPACE_API_KEY=replace-with-the-space-app-key
+HUGGINGFACE_TOKEN=hf_read_token
+LIVE_RUN_ACCESS_KEY=use-a-different-random-secret
+TARGET_HOST_ALLOWLIST=your-provider.example,owner-space.hf.space
 ```
 
 For local Python development, save it in `backend/.env` or export it in the
 shell that starts Uvicorn. For Compose, save it in the repository-root `.env`.
-Then choose the live target and enter its non-secret base URL and model ID in
-the run launcher. Requests use bounded concurrency and timeouts. Custom endpoint
-validation requires an explicit hostname allowlist and blocks private and
-link-local destinations by default. Trusted self-hosted models additionally
-require `ALLOW_PRIVATE_TARGET_URLS=true`.
+Then choose the live target and enter its non-secret base URL, model ID, and
+separate live-run access key in the launcher. Requests use bounded concurrency,
+prompt quotas, and timeouts. Custom endpoint validation requires an explicit
+hostname allowlist, requires HTTPS when credentials are attached, and blocks
+private and link-local destinations by default. Trusted self-hosted models
+additionally require `ALLOW_PRIVATE_TARGET_URLS=true`.
 
 `OPENAI_COMPATIBLE_API_KEY` is read only by the server. The browser supplies the
-non-secret endpoint and model selection, never a provider credential. Keep the
-live target disabled on an unauthenticated public deployment to prevent
-unbounded third-party spend.
+non-secret endpoint and model selection, never a provider credential.
+`LIVE_RUN_ACCESS_KEY` is a distinct admission key entered by trusted users and
+held only in page memory. It is a small-deployment safeguard, not user identity,
+tenant isolation, or a substitute for production authorization and budgets.
+
+### Included Hugging Face model target
+
+The [`hf-space/`](hf-space/) folder is a separate **Gradio ZeroGPU** Space that
+hosts the pinned Apache-2.0 `Qwen/Qwen2.5-0.5B-Instruct` model. It requires a
+`SPACE_API_KEY`, exposes a queued `/chat` endpoint, limits GPU concurrency, and
+never intentionally logs prompts or outputs. The backend wakes a sleeping
+Space, follows Gradio's submit/result protocol, and records the returned model
+revision with each result.
+
+Follow [Hugging Face model target](docs/HUGGING_FACE_SPACE.md) to create the
+Space, select ZeroGPU, upload the prepared folder, configure its secrets, and
+connect the exact Space hostname to Render. Eligible free accounts receive five
+authenticated GPU minutes daily, so begin with 3–6 prompts and concurrency `1`.
+Use the deterministic reference workflow—not live ZeroGPU—for the complete
+600-prompt portfolio demonstration.
 
 ## DeepEval and LangSmith
 
@@ -221,6 +244,7 @@ The generated OpenAPI contract at `/docs` is the canonical endpoint reference.
 ```text
 backend/              FastAPI domain, persistence, evaluation adapters, tests
 frontend/             React/Vite experience and component tests
+hf-space/             Authenticated Gradio ZeroGPU target and contract tests
 docs/                 Architecture, metrics, claims, privacy, threats, runbook
 .github/workflows/    Continuous integration
 Dockerfile            Single-image production build

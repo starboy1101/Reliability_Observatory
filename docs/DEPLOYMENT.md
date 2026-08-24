@@ -19,9 +19,11 @@ only `/data` and the temporary filesystem are writable. `healthz` proves that
 the process is alive. `readyz` is the traffic-gating check and verifies required
 local dependencies such as the database.
 
-This profile has no user authentication or tenant boundary. It is suitable as
-a public, deterministic, zero-key portfolio demo. Do **not** put a paid provider
-key on an unauthenticated internet-facing instance.
+This profile has no user identity or tenant boundary. It is suitable as a
+public, deterministic, zero-key portfolio demo. Live target and DeepEval
+launches are disabled unless `LIVE_RUN_ACCESS_KEY` is configured, then require
+that shared key and the live-run quotas below. The key is an admission control
+for a small trusted audience, not full multi-tenant authorization.
 
 ## Render Blueprint
 
@@ -58,10 +60,18 @@ trusted frontend is introduced; never use `*` with credentials.
 | `STATIC_DIR` | Compiled SPA directory | `/app/static` |
 | `CORS_ORIGINS` | Comma-separated cross-origin allowlist | Empty/same-origin |
 | `MAX_RUN_CONCURRENCY` | Upper bound for concurrent prompt work | Backend default |
+| `MAX_ACTIVE_RUNS` | Global in-process ceiling for simultaneous runs | `4` |
+| `MAX_DEMO_DELAY_MS` | Reject intentionally slow anonymous demo targets above this delay | `50` ms |
+| `MAX_ACTIVE_LIVE_RUNS` | Maximum hosted-model runs active at once | `1` |
+| `MAX_LIVE_RUN_PROMPTS` | Per-run hosted-model prompt quota | `6` on the free ZeroGPU Blueprint |
 | `TARGET_TIMEOUT_SECONDS` | Per-target request timeout | Backend default |
+| `TARGET_WARMUP_SECONDS` | Maximum asynchronous warm-up for sleeping `.hf.space` targets | `180` seconds |
 | `ALLOW_PRIVATE_TARGET_URLS` | Permit non-public target addresses | `false` |
 | `TARGET_HOST_ALLOWLIST` | Required exact/wildcard approval for live target hosts | Empty (live targets disabled) |
 | `OPENAI_COMPATIBLE_API_KEY` | Server-only target credential | Unset |
+| `HUGGINGFACE_SPACE_API_KEY` | Server-only app key matching the included Space's `SPACE_API_KEY` | Unset |
+| `HUGGINGFACE_TOKEN` | Optional server-only HF read token for authenticated ZeroGPU quota | Unset |
+| `LIVE_RUN_ACCESS_KEY` | Separate shared bearer key required for live/DeepEval launches | Unset (live integrations disabled) |
 | `INSTALL_OPTIONAL_INTEGRATIONS` | Build DeepEval and LangSmith packages into the image | `false` |
 | `DEEPEVAL_MODEL` | Enables the optional judge adapter | Unset |
 | `LANGSMITH_TRACING` | Enables best-effort tracing | `false` |
@@ -73,6 +83,14 @@ compiled into browser code and must never contain a secret. Render's Blueprint
 deliberately omits optional secret placeholders so a zero-key deploy does not
 ask for or accidentally enable them; add secrets in Render's dashboard only
 after the deployment has the required access and cost controls.
+
+The optional model target under `hf-space/` has a separate deployment and
+secret boundary. See [Hugging Face model target](HUGGING_FACE_SPACE.md). Use an
+exact Space hostname in `TARGET_HOST_ALLOWLIST`, use the same app-key value for
+the Space's `SPACE_API_KEY` and Render's `HUGGINGFACE_SPACE_API_KEY`, optionally
+add a read-only `HUGGINGFACE_TOKEN` for authenticated quota, and set a different
+`LIVE_RUN_ACCESS_KEY` for trusted users. Start with 3–6 prompts and concurrency
+`1`; the Render Blueprint caps live runs at six prompts for the free profile.
 
 ## Production topology
 
@@ -104,5 +122,6 @@ For multiple users or replicas:
 - model output is rendered inert in the browser;
 - the frontend passes keyboard and reduced-motion checks;
 - the database volume survives replacement of the container;
-- no paid provider key is present on an unauthenticated public deployment;
+- live integrations are disabled or protected by a distinct access key and
+  strict run quotas;
 - rollback uses a schema-compatible previous image and preserves run evidence.

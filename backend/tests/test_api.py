@@ -1,8 +1,11 @@
+import asyncio
 import csv
 import io
 
 from conftest import wait_for_terminal
 from fastapi.testclient import TestClient
+
+import app.orchestrator as orchestrator_module
 
 
 def launch_demo(client: TestClient, kind: str, **overrides) -> dict:
@@ -168,6 +171,7 @@ def test_unavailable_deepeval_is_actionable_and_does_not_affect_demo(client: Tes
     if not deepeval["available"]:
         response = client.post(
             "/api/v1/runs",
+            headers={"Authorization": "Bearer test-live-run-access"},
             json={"target": {"kind": "demo_baseline"}, "evaluator": "deepeval", "limit": 1},
         )
         assert response.status_code == 422
@@ -179,6 +183,7 @@ def test_live_target_is_rejected_before_a_run_is_created_without_allowlist(
 ) -> None:
     response = client.post(
         "/api/v1/runs",
+        headers={"Authorization": "Bearer test-live-run-access"},
         json={
             "name": "Unapproved target",
             "target": {
@@ -193,4 +198,126 @@ def test_live_target_is_rejected_before_a_run_is_created_without_allowlist(
 
     assert response.status_code == 422
     assert "TARGET_HOST_ALLOWLIST" in response.json()["detail"]
+    assert client.get("/api/v1/runs").json()["total"] == 0
+
+
+def test_live_target_requires_access_key_and_enforces_prompt_quota(
+    client: TestClient,
+) -> None:
+    payload = {
+        "target": {
+            "kind": "openai_compatible",
+            "model": "candidate-v1",
+            "base_url": "https://models.example.test/v1",
+        },
+        "evaluator": "deterministic",
+        "categories": ["hallucination"],
+        "limit": 1,
+        "concurrency": 1,
+    }
+    missing = client.post("/api/v1/runs", json=payload)
+    wrong = client.post(
+        "/api/v1/runs",
+        headers={"Authorization": "Bearer wrong"},
+        json=payload,
+    )
+    oversized = client.post(
+        "/api/v1/runs",
+        headers={"Authorization": "Bearer test-live-run-access"},
+        json={**payload, "limit": 25},
+    )
+
+    assert missing.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert wrong.status_code == 401
+    assert oversized.status_code == 422
+    assert "limited to 6 prompts" in oversized.json()["detail"]
+    assert client.get("/api/v1/runs").json()["total"] == 0
+
+
+def test_huggingface_gradio_target_requires_live_access_key(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/v1/runs",
+        json={
+            "target": {
+                "kind": "huggingface_gradio",
+                "model": "Qwen/Qwen2.5-0.5B-Instruct",
+                "base_url": "https://owner-model.hf.space",
+            },
+            "evaluator": "deterministic",
+            "limit": 1,
+            "concurrency": 1,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert client.get("/api/v1/runs").json()["total"] == 0
+
+
+def test_only_one_live_run_is_admitted(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class BlockingTarget:
+        async def validate(self) -> None:
+            return None
+
+        async def prepare(self) -> None:
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "build_target",
+        lambda _config, _settings: BlockingTarget(),
+    )
+    payload = {
+        "target": {
+            "kind": "openai_compatible",
+            "model": "candidate-v1",
+            "base_url": "https://models.example.test/v1",
+        },
+        "evaluator": "deterministic",
+        "categories": ["hallucination"],
+        "limit": 1,
+        "concurrency": 1,
+    }
+    headers = {"Authorization": "Bearer test-live-run-access"}
+
+    first = client.post("/api/v1/runs", headers=headers, json=payload)
+    second = client.post("/api/v1/runs", headers=headers, json=payload)
+    unauthorized_cancel = client.post(
+        f"/api/v1/runs/{first.json()['id']}/cancel"
+    )
+    authorized_cancel = client.post(
+        f"/api/v1/runs/{first.json()['id']}/cancel",
+        headers=headers,
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert second.headers["retry-after"] == "10"
+    assert unauthorized_cancel.status_code == 401
+    assert authorized_cancel.status_code == 200
+    assert authorized_cancel.json()["status"] == "cancelled"
+    assert client.get("/api/v1/runs").json()["total"] == 1
+
+
+def test_demo_delay_is_bounded_by_server_policy(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/runs",
+        json={
+            "target": {"kind": "demo_baseline", "demo_delay_ms": 51},
+            "evaluator": "deterministic",
+            "limit": 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "50 ms safety limit" in response.json()["detail"]
     assert client.get("/api/v1/runs").json()["total"] == 0

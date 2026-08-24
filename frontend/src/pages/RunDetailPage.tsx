@@ -27,6 +27,8 @@ export function RunDetailPage() {
   )
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [cancelAccessKey, setCancelAccessKey] = useState('')
+  const [cancelError, setCancelError] = useState('')
   const reducedMotion = useReducedMotion()
 
   if (loading && !run) return <LoadingState label="Opening evaluation run" />
@@ -37,14 +39,30 @@ export function RunDetailPage() {
     ? Math.max(0, Math.round(100 - (run.failedCases / eligibleCases) * 100))
     : 0
   const active = run.status === 'queued' || run.status === 'running'
+  const protectedRun =
+    run.targetKind === 'openai_compatible' ||
+    run.targetKind === 'huggingface_gradio' ||
+    run.evaluator === 'deepeval'
   const visibleFindings = (findings.data ?? []).filter((finding) => finding.runId === run.id || source === 'demo').slice(0, Math.max(2, Math.ceil(run.progress / 18)))
 
   const cancel = async () => {
     setCancelling(true)
-    await api.cancelRun(run.id)
-    await refresh()
-    setConfirmCancel(false)
-    setCancelling(false)
+    setCancelError('')
+    try {
+      await api.cancelRun(
+        run.id,
+        protectedRun ? cancelAccessKey.trim() || undefined : undefined,
+      )
+      await refresh()
+      setConfirmCancel(false)
+      setCancelAccessKey('')
+    } catch (value) {
+      setCancelError(
+        value instanceof Error ? value.message : 'The run could not be cancelled.',
+      )
+    } finally {
+      setCancelling(false)
+    }
   }
 
   return (
@@ -132,7 +150,13 @@ export function RunDetailPage() {
           <div><span className="live-dot" /><div><strong>{run.status === 'queued' ? 'Waiting for a worker' : 'Evaluation in progress'}</strong><small><Clock3 aria-hidden="true" size={13} /> {Math.round(run.progress)}% complete</small></div></div>
           <AnimatePresence mode="wait" initial={false}>
             {confirmCancel ? (
-              <motion.div className="cancel-confirm" key="confirm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><span>Stop after the current case?</span><button type="button" className="button button--danger pressable" disabled={cancelling} onClick={() => void cancel()}>{cancelling ? 'Stopping…' : 'Stop run'}</button><button type="button" className="icon-button pressable" onClick={() => setConfirmCancel(false)} aria-label="Keep evaluation running"><X aria-hidden="true" size={18} /></button></motion.div>
+              <motion.div className="cancel-confirm" key="confirm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <span>Stop after the current case?</span>
+                {protectedRun && <label className="cancel-confirm__key"><span>Access key</span><input type="password" autoComplete="off" value={cancelAccessKey} onChange={(event) => setCancelAccessKey(event.target.value)} aria-label="Live-run access key for cancellation" /></label>}
+                <button type="button" className="button button--danger pressable" disabled={cancelling || (protectedRun && !cancelAccessKey.trim())} onClick={() => void cancel()}>{cancelling ? 'Stopping…' : 'Stop run'}</button>
+                <button type="button" className="icon-button pressable" onClick={() => { setConfirmCancel(false); setCancelError('') }} aria-label="Keep evaluation running"><X aria-hidden="true" size={18} /></button>
+                {cancelError && <span className="cancel-confirm__error" role="alert">{cancelError}</span>}
+              </motion.div>
             ) : (
               <motion.button key="cancel" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} type="button" className="button button--quiet pressable" onClick={() => setConfirmCancel(true)}><Ban aria-hidden="true" size={17} /> Cancel run</motion.button>
             )}

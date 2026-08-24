@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Cpu, FlaskConical, Info, Server, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, Cloud, Cpu, FlaskConical, Info, Server, ShieldCheck, Sparkles } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -13,7 +13,8 @@ const targets: Array<{
 }> = [
   { value: 'demo_hardened', name: 'Hardened demo', description: 'Safe built-in target with lower seeded failure rates.', Icon: ShieldCheck },
   { value: 'demo_baseline', name: 'Baseline demo', description: 'Safe built-in target that demonstrates common violations.', Icon: Sparkles },
-  { value: 'openai_compatible', name: 'OpenAI-compatible', description: 'A server-approved endpoint configured for this workspace.', Icon: Server },
+  { value: 'huggingface_gradio', name: 'Free HF Space', description: 'The included queued Gradio target on Hugging Face ZeroGPU.', Icon: Cloud },
+  { value: 'openai_compatible', name: 'OpenAI-compatible', description: 'Another server-approved chat-completions endpoint.', Icon: Server },
 ]
 
 export function LaunchRunPage() {
@@ -22,12 +23,19 @@ export function LaunchRunPage() {
   const [targetKind, setTargetKind] = useState<LaunchRunInput['targetKind']>('demo_hardened')
   const [model, setModel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [accessKey, setAccessKey] = useState('')
   const [evaluator, setEvaluator] = useState<LaunchRunInput['evaluator']>('deterministic')
   const [categories, setCategories] = useState<CategoryId[]>(CATEGORY_IDS)
   const [limit, setLimit] = useState(600)
   const [concurrency, setConcurrency] = useState(4)
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
+  const requiresAccessKey =
+    targetKind === 'openai_compatible' ||
+    targetKind === 'huggingface_gradio' ||
+    evaluator === 'deepeval'
+  const requiresTargetDetails =
+    targetKind === 'openai_compatible' || targetKind === 'huggingface_gradio'
 
   const estimatedMinutes = useMemo(
     () => Math.max(1, Math.ceil(limit / Math.max(1, concurrency) / 45)),
@@ -44,14 +52,35 @@ export function LaunchRunPage() {
     )
   }
 
+  const chooseTarget = (value: LaunchRunInput['targetKind']) => {
+    setTargetKind(value)
+    if (value === 'openai_compatible' || value === 'huggingface_gradio') {
+      setModel((current) => current || 'Qwen/Qwen2.5-0.5B-Instruct')
+      setLimit(6)
+      setConcurrency(1)
+    }
+  }
+
+  const chooseEvaluator = (value: LaunchRunInput['evaluator']) => {
+    setEvaluator(value)
+    if (value === 'deepeval') {
+      setLimit((current) => Math.min(current, 6))
+      setConcurrency(1)
+    }
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim()) {
       setError('Give this evaluation a recognizable name.')
       return
     }
-    if (targetKind === 'openai_compatible' && (!model.trim() || !baseUrl.trim())) {
+    if (requiresTargetDetails && (!model.trim() || !baseUrl.trim())) {
       setError('Model name and server-approved base URL are required for this target.')
+      return
+    }
+    if (requiresAccessKey && !accessKey.trim()) {
+      setError('Enter the live-run access key supplied by the deployment owner.')
       return
     }
     setLaunching(true)
@@ -62,6 +91,7 @@ export function LaunchRunPage() {
         targetKind,
         model: model.trim() || undefined,
         baseUrl: baseUrl.trim() || undefined,
+        accessKey: requiresAccessKey ? accessKey.trim() || undefined : undefined,
         evaluator,
         categories,
         limit,
@@ -93,18 +123,18 @@ export function LaunchRunPage() {
             <div className="choice-grid">
               {targets.map(({ value, name: targetName, description, Icon }) => (
                 <label className="choice-card pressable" data-selected={targetKind === value} key={value}>
-                  <input type="radio" name="target" value={value} checked={targetKind === value} onChange={() => setTargetKind(value)} />
+                  <input type="radio" name="target" value={value} checked={targetKind === value} onChange={() => chooseTarget(value)} />
                   <Icon aria-hidden="true" size={23} />
                   <span><strong>{targetName}</strong><small>{description}</small></span>
                   <span className="choice-card__check" aria-hidden="true"><Check size={14} /></span>
                 </label>
               ))}
             </div>
-            {targetKind === 'openai_compatible' && (
+            {requiresTargetDetails && (
               <div className="field-grid field-grid--two reveal-region">
                 <label className="field"><span>Model name</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="your-model-id" required /></label>
-                <label className="field"><span>Base URL</span><input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://approved-host.example/v1" required /></label>
-                <p className="field-note"><ShieldCheck aria-hidden="true" size={16} /> Credentials are never entered here. The server resolves a fixed environment secret and blocks private or unapproved hosts.</p>
+                <label className="field"><span>Base URL</span><input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={targetKind === 'huggingface_gradio' ? 'https://owner-space.hf.space' : 'https://approved-host.example/v1'} required /></label>
+                <p className="field-note"><ShieldCheck aria-hidden="true" size={16} /> {targetKind === 'huggingface_gradio' ? <>Use only the Space origin, with no path. The backend handles Gradio's queue and keeps both Space credentials private.</> : <>Use the server-approved API base URL. The provider credential stays on the server.</>}</p>
               </div>
             )}
           </section>
@@ -122,10 +152,16 @@ export function LaunchRunPage() {
               ))}
             </div>
             <div className="field-grid field-grid--three">
-              <label className="field"><span>Evaluator</span><select value={evaluator} onChange={(event) => setEvaluator(event.target.value as LaunchRunInput['evaluator'])}><option value="deterministic">Deterministic policy</option><option value="deepeval">DeepEval (server setup required)</option></select></label>
-              <label className="field"><span>Prompt limit</span><input type="number" min={6} max={600} step={6} value={limit} onChange={(event) => setLimit(Math.min(600, Math.max(6, Number(event.target.value))))} /><small>600 runs the complete suite; the reference comparison remains a fixed 500-case benchmark.</small></label>
+              <label className="field"><span>Evaluator</span><select value={evaluator} onChange={(event) => chooseEvaluator(event.target.value as LaunchRunInput['evaluator'])}><option value="deterministic">Deterministic policy</option><option value="deepeval">DeepEval (server setup required)</option></select></label>
+              <label className="field"><span>Prompt limit</span><input type="number" min={6} max={600} step={6} value={limit} onChange={(event) => setLimit(Math.min(600, Math.max(6, Number(event.target.value))))} /><small>{targetKind === 'huggingface_gradio' ? 'Free ZeroGPU has a five GPU-minute daily authenticated quota; use 3–6 prompts at a time.' : requiresAccessKey ? 'The included deployment caps live integrations at six prompts; operators can raise it only with a controlled budget.' : '600 runs the complete suite; the reference comparison remains a fixed 500-case benchmark.'}</small></label>
               <label className="field"><span>Concurrency</span><select value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))}><option value={1}>1 worker</option><option value={2}>2 workers</option><option value={4}>4 workers</option><option value={8}>8 workers</option></select></label>
             </div>
+            {requiresAccessKey && (
+              <div className="field-grid field-grid--two reveal-region">
+                <label className="field"><span>Live-run access key</span><input type="password" autoComplete="off" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder="Provided by the deployment owner" required /></label>
+                <p className="field-note"><ShieldCheck aria-hidden="true" size={16} /> Sent only to Reliability Observatory and kept in page memory. It is different from every model-provider credential.</p>
+              </div>
+            )}
           </section>
         </div>
 

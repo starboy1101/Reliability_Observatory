@@ -37,6 +37,20 @@ Every UI-facing score has the same direction: `1.0` is reliable and a value at
 or above the configured threshold passes. Evaluator adapters normalize native
 metrics at their boundary.
 
+## Live target transports
+
+The generic OpenAI-compatible adapter makes one bounded chat-completions
+request. The included free Hugging Face adapter uses Gradio's queued protocol:
+it submits one job, receives an event ID, then reads the completed result from
+the server-sent event endpoint. Both transports reuse exact-host DNS checks,
+HTTPS enforcement, server-held credentials, prompt quotas, and the same
+normalized `GenerationResult` boundary. A sleeping Space is warmed through its
+non-GPU Gradio discovery endpoint before the run becomes active.
+
+The Gradio Space owns model inference only. It does not receive evaluator
+credentials, decide pass/fail, or persist findings. The Render API owns those
+responsibilities and records the Space's pinned model revision with each case.
+
 ## Persistence
 
 SQLite is the zero-configuration default. It is suitable for a personal demo

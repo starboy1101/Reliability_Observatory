@@ -18,6 +18,7 @@ def app_settings(tmp_path: Path) -> Settings:
         max_run_concurrency=50,
         allow_private_target_urls=True,
         cors_origins="http://testserver",
+        live_run_access_key="test-live-run-access",
     )
 
 

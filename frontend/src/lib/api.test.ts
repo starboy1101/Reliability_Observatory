@@ -87,15 +87,13 @@ describe('API normalization', () => {
   })
 
   it('surfaces live launch errors and never replaces them with demo evidence', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ detail: 'TARGET_HOST_ALLOWLIST is required' }), {
-          status: 422,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'TARGET_HOST_ALLOWLIST is required' }), {
+        status: 422,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     )
+    vi.stubGlobal('fetch', fetchMock)
 
     await expect(
       api.launchRun({
@@ -103,11 +101,54 @@ describe('API normalization', () => {
         targetKind: 'openai_compatible',
         model: 'candidate-v1',
         baseUrl: 'https://models.example.test/v1',
+        accessKey: 'run-access-secret',
         evaluator: 'deterministic',
         categories: ['hallucination'],
         limit: 1,
         concurrency: 1,
       }),
     ).rejects.toThrow('TARGET_HOST_ALLOWLIST is required')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/runs',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer run-access-secret',
+        }),
+      }),
+    )
+    expect(String(fetchMock.mock.calls[0][1]?.body)).not.toContain(
+      'run-access-secret',
+    )
+  })
+
+  it('protects live cancellation with a header-only access key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-live',
+          target_kind: 'openai_compatible',
+          evaluator_name: 'deterministic',
+          status: 'cancelled',
+          total_cases: 6,
+          processed_cases: 0,
+          skipped_cases: 6,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.cancelRun('run-live', 'cancel-access-secret')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/runs/run-live/cancel',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer cancel-access-secret',
+        }),
+      }),
+    )
+    expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined()
   })
 })
