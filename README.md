@@ -28,8 +28,9 @@ generic monitoring dashboard.
   judge adapter.
 - Optional LangSmith tracing that never becomes the source of truth and never
   makes a run fail when tracing is unavailable.
-- Persistent evaluation runs, progress streaming, cancellation, filtered
-  findings, and CSV/JSON export.
+- SQLite-backed evaluation runs, progress streaming, cancellation, filtered
+  findings, and CSV/JSON export. Local Docker persists them; the Render Free
+  profile treats hosted history as disposable.
 - A baseline-versus-candidate comparison that reports both absolute change and
   relative violation reduction.
 - A responsive React interface with an accessible Reliability Lens, adaptive
@@ -69,11 +70,13 @@ FastAPI API ─────── SQLite (local/demo) or configured SQL database
 ```
 
 Runs are created asynchronously and results are checkpointed in the database.
+On Render Free, that database resets after a spin-down, restart, or redeploy.
 The included single-process dispatcher is ideal for a portfolio deployment or
 small team. For horizontally scaled production, replace it with a durable queue
 worker as described in [Architecture](docs/ARCHITECTURE.md).
 
-The included deployment profile has a public, zero-key deterministic demo.
+The included deployment profile has a public, zero-key deterministic demo on a
+Render Free web service.
 Live target and DeepEval launches require a separate shared access key and use
 small server-side run caps, but this is not a ready-made identity or
 multi-tenant authorization boundary.

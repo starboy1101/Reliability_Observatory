@@ -27,25 +27,35 @@ for a small trusted audience, not full multi-tenant authorization.
 
 ## Render Blueprint
 
-The root `render.yaml` defines the same profile: one Starter web service, one
-1 GB disk mounted at `/data`, and `/readyz` as the health check. Render supplies
-`PORT`; the container reads it at startup and in its Docker health check.
+The root `render.yaml` defines a free Docker web service with `/readyz` as its
+health check. Render supplies `PORT`; the container reads it at startup and in
+its Docker health check. The image writes SQLite under `/data`, but the free
+service has no persistent disk, so this path is ephemeral on Render.
 
 1. Push the repository to a Git provider and create a Render Blueprint from
    `render.yaml`.
 2. Confirm that CI passes. `autoDeployTrigger: checksPass` prevents a commit
    deploy until linked checks succeed.
 3. Leave model and tracing credentials unset for the public demo.
-4. After deployment, verify `/healthz`, `/readyz`, `/api/v1/version`, the SPA,
+4. Confirm that the selected instance type is **Free** and that the service has
+   no attached disk.
+5. After deployment, verify `/healthz`, `/readyz`, `/api/v1/version`, the SPA,
    and one short deterministic run.
-5. Use Render's Blueprint validator (`render blueprints validate render.yaml`)
+6. Use Render's Blueprint validator (`render blueprints validate render.yaml`)
    when the Render CLI is available.
 
-The attached disk forces a single service instance, prevents autoscaling, and
-means Render stops the old instance before mounting the disk on its replacement;
-brief deploy downtime is expected. Only `/data` survives deploys. Disk snapshots
-are useful recovery points, but operators should also test an
-application-consistent SQLite backup and restore.
+Render Free spins the service down after 15 minutes without inbound traffic.
+The next request wakes it, which can take about a minute. A spin-down, restart,
+or redeploy deletes the local SQLite database, including saved runs and results.
+The deterministic suite and reference benchmark are rebuilt from source, but
+user-created evaluation history is not. Export any findings you want to keep.
+Use a paid persistent disk or an external durable database before treating this
+as a production system of record.
+
+If this service already exists on Starter with an attached disk, export any
+results you need before changing plans. Remove the disk in the Render Dashboard,
+then sync the Blueprint or select the Free instance type. Removing the disk
+deletes its SQLite history; omitting `disk` from YAML is not a data migration.
 
 Same-origin production requests need no CORS grant, so the Blueprint sets
 `CORS_ORIGINS` to an empty value. Add only exact HTTPS origins if a separate
@@ -56,7 +66,7 @@ trusted frontend is introduced; never use `*` with credentials.
 | Variable | Purpose | Portfolio default |
 | --- | --- | --- |
 | `ENVIRONMENT` | Runtime profile | `production` |
-| `DATABASE_URL` | Async SQLAlchemy connection | SQLite file under `/data` |
+| `DATABASE_URL` | Async SQLAlchemy connection | SQLite under `/data` (ephemeral on Render Free) |
 | `STATIC_DIR` | Compiled SPA directory | `/app/static` |
 | `CORS_ORIGINS` | Comma-separated cross-origin allowlist | Empty/same-origin |
 | `MAX_RUN_CONCURRENCY` | Upper bound for concurrent prompt work | Backend default |
@@ -121,7 +131,10 @@ For multiple users or replicas:
 - DeepEval-off and LangSmith-off paths work;
 - model output is rendered inert in the browser;
 - the frontend passes keyboard and reduced-motion checks;
-- the database volume survives replacement of the container;
+- a cold start with an empty ephemeral database becomes ready successfully;
+- operators understand that Render Free deletes saved runs on sleep, restart,
+  and redeploy;
 - live integrations are disabled or protected by a distinct access key and
   strict run quotas;
-- rollback uses a schema-compatible previous image and preserves run evidence.
+- rollback uses a schema-compatible previous image and critical evidence is
+  exported before any redeploy that resets ephemeral storage.

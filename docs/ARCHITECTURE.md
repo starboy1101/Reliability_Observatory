@@ -59,7 +59,9 @@ driver and an absolute writable path:
 `sqlite+aiosqlite:////data/reliability.db`. Use PostgreSQL before horizontal
 scaling, after adding its async driver and a tested migration process. Run/result
 records keep prompt and evaluator snapshots so historical evidence does not
-change when a suite is updated.
+change when a suite is updated. Docker Compose persists `/data` in a named
+volume; the Render Free profile does not, so its hosted records are disposable
+and reset whenever the instance sleeps, restarts, or redeploys.
 
 ## Scaling path
 
@@ -82,13 +84,14 @@ alone do not provide that guarantee.
 The root Dockerfile compiles the Vite application, installs the Python package,
 copies the web build into `STATIC_DIR`, and serves the SPA and API from one
 origin. This avoids CORS complexity for the portfolio deployment. The runtime
-uses a non-root account, writes durable state only beneath `/data`, and binds to
+uses a non-root account, writes mutable state only beneath `/data`, and binds to
 the platform-provided `PORT`. Development keeps two processes for fast reloads.
 
 The Docker/Render topology is deliberately constrained to one process and one
-instance. It should not be presented as durable distributed execution: the
-database preserves completed evidence, but an external queue and worker lease
-protocol are required before claiming crash-safe horizontal processing.
+instance. It should not be presented as durable distributed execution: local
+Compose can preserve completed evidence, but Render Free cannot. A durable
+database plus an external queue and worker lease protocol are required before
+claiming crash-safe horizontal processing.
 
 ## Public-demo boundary
 

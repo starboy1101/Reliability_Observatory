@@ -5,11 +5,11 @@ Reliability Observatory can evaluate the pinned
 No Docker SDK is used. The included [`hf-space/`](../hf-space/) directory is the
 complete Space repository.
 
-This guide makes the **model host** free. The root `render.yaml` intentionally
-uses a paid Starter service and persistent disk so evaluation records survive
-restarts. A Render Free web service is possible only with ephemeral local
-SQLite (or a separately managed database); its saved runs disappear whenever
-the service spins down, restarts, or redeploys.
+Both included hosting profiles are free-compatible: the model uses Hugging Face
+ZeroGPU and the root `render.yaml` uses a Render Free web service. Render's local
+SQLite filesystem is ephemeral, so saved runs disappear whenever the service
+spins down, restarts, or redeploys. Export important results or connect a
+separately managed durable database before relying on the hosted history.
 
 ```text
 Browser

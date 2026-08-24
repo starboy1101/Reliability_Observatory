@@ -2,17 +2,13 @@ services:
   - type: web
     name: reliability-observatory
     runtime: docker
-    plan: starter
+    plan: free
     region: singapore
     autoDeployTrigger: checksPass
     numInstances: 1
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /readyz
-    disk:
-      name: reliability-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: ENVIRONMENT
         value: production
