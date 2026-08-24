@@ -9,7 +9,6 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /readyz
-    maxShutdownDelaySeconds: 60
     disk:
       name: reliability-data
       mountPath: /data
